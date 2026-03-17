@@ -76,23 +76,23 @@ class Trainer:
                     [(s['return'] - ret_mean) / ret_std for s in mb],
                     dtype=torch.float32, device=device)
 
-                # 逐样本前向（图大小可变，无法简单 stack）
-                log_pas = []
-                for s in mb:
+                # 梯度累积：逐样本前向+backward，激活值即时释放。
+                # 等价于对整个 mini-batch 求平均 loss，但显存只需一个样本的量。
+                self.optimizer.zero_grad()
+                batch_loss_val = 0.0
+                for s, adv in zip(mb, advantages):
                     scores    = policy.forward_single(s['graph_obs'], s['cand_obs'], device)
                     log_probs = F.log_softmax(scores / cfg.temperature, dim=0)
                     log_pa    = log_probs[s['action']]
-                    log_pas.append(log_pa)
+                    # 除以 batch 大小以保持与原版相同的梯度尺度
+                    loss = -(log_pa * adv) / len(mb)
+                    loss.backward()
+                    batch_loss_val += loss.item()
 
-                log_pa_tensor = torch.stack(log_pas)   # (batch,)
-                batch_loss    = -(log_pa_tensor * advantages).mean()
-
-                self.optimizer.zero_grad()
-                batch_loss.backward()
                 nn.utils.clip_grad_norm_(policy.parameters(), max_norm=1.0)
                 self.optimizer.step()
 
-                total_loss += batch_loss.item()
+                total_loss += batch_loss_val
                 n_updates  += 1
 
         return total_loss / max(n_updates, 1), adv_var
