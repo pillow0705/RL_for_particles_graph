@@ -2,8 +2,8 @@ import numpy as np
 from itertools import combinations
 
 from config import Config
-from physics import (pbc_diff_njit, solve_three_spheres_njit,
-                     check_collision_njit, check_single_collision_njit)
+from physics import (pbc_diff, solve_three_spheres,
+                     check_collision, check_single_collision)
 
 
 class ConstructEnv:
@@ -160,7 +160,7 @@ class ConstructEnv:
         y2  = np.sqrt(max(0.0, d02**2 - x2**2))
         p2  = p0 + np.array([x2, y2, 0.0])
 
-        valid, p3, _ = solve_three_spheres_njit(p0, r0, p1, r1, p2, r2, r3)
+        valid, p3, _ = solve_three_spheres(p0, r0, p1, r1, p2, r2, r3)
         if not valid:
             p3 = p0 + np.array([0.0, 0.0, r0 + r3])
 
@@ -217,7 +217,7 @@ class ConstructEnv:
         all_rad = np.array(self.rad, dtype=np.float64)
         touching = []
         for m in range(n_new):
-            dm    = pbc_diff_njit(all_pos[m], all_pos[n_new], self.L)
+            dm    = pbc_diff(all_pos[m], all_pos[n_new], self.L)
             dist  = np.sqrt(np.sum(dm**2))
             r_sum = all_rad[m] + all_rad[n_new]
             gap   = dist - r_sum
@@ -330,8 +330,8 @@ class ConstructEnv:
         p_k, r_k = all_pos[k], all_rad[k]
 
         # PBC 展开：将 j、k 的坐标平移到 i 的近邻像（最小像约定）
-        p_j = p_i + pbc_diff_njit(p_j, p_i, self.L)
-        p_k = p_i + pbc_diff_njit(p_k, p_i, self.L)
+        p_j = p_i + pbc_diff(p_j, p_i, self.L)
+        p_k = p_i + pbc_diff(p_k, p_i, self.L)
 
         face_type    = (self.particle_types[i] + self.particle_types[j]
                         + self.particle_types[k])
@@ -339,13 +339,13 @@ class ConstructEnv:
 
         # new_ptype=0 → S 球，new_ptype=1 → L 球
         for new_ptype, r_new in enumerate(cfg.diameters / 2.0):
-            valid, sol1, sol2 = solve_three_spheres_njit(p_i, r_i, p_j, r_j,
+            valid, sol1, sol2 = solve_three_spheres(p_i, r_i, p_j, r_j,
                                                           p_k, r_k, r_new)
             if not valid:
                 continue
             # sol1/sol2 是三球平面两侧的两个解，均需检查碰撞
             for sol in (sol1, sol2):
-                collision, coord = check_collision_njit(
+                collision, coord = check_collision(
                     sol, r_new, all_pos, all_rad, self.L, cfg.collision_tol)
                 if not collision:
                     cid          = self._new_cand_id()
@@ -379,7 +379,7 @@ class ConstructEnv:
         for cid, feat in self._candidate_set.items():
             sol       = feat[:3].astype(np.float64)
             r_new     = float(feat[3])
-            collision, touching = check_single_collision_njit(
+            collision, touching = check_single_collision(
                 sol, r_new, new_pos_np, new_rad, self.L, self.cfg.collision_tol)
             if collision:
                 to_delete.append(cid)
