@@ -154,24 +154,87 @@ class PackingPolicy(nn.Module):
             'n_edges':    len(new_edge_src),
         }
 
+    def _forward_gnn_new_batched(self, graph_obs: dict, cand_obs: dict,
+                                 device: torch.device) -> torch.Tensor:
+        """
+        批量处理所有 G_new：将 n_cands 张图拼成一个大图（总节点数 = n_cands × (N+1)），
+        gnn_new 只做一次前向传播，最后 reshape 后逐图 readout。
+
+        各图的节点索引通过 offset = i*(N+1) 隔开，边索引同样偏移，
+        因此 GNNLayer 的 scatter_add 和 bincount 在大图上仍然正确。
+        """
+        n_cands    = cand_obs['n_cands']
+        N          = graph_obs['n_nodes']
+        d          = self.gnn_new.node_emb.embedding_dim
+        old_ntypes = graph_obs['node_types']   # (N,)
+        old_src    = graph_obs['edge_src']     # (2E,)
+        old_dst    = graph_obs['edge_dst']     # (2E,)
+        old_etype  = graph_obs['edge_types']   # (2E,)
+
+        # ── 构建批量图 ──
+        node_type_parts = []
+        esrc_parts, edst_parts, etype_parts = [], [], []
+
+        for i, cand in enumerate(cand_obs['candidates']):
+            offset   = i * (N + 1)
+            new_node = N + offset
+
+            # 节点：N 个旧粒子 + 1 个新粒子
+            node_type_parts.append(old_ntypes)
+            node_type_parts.append(np.array([cand['new_ptype']], dtype=np.int64))
+
+            # 旧边（加偏移）
+            if len(old_src) > 0:
+                esrc_parts.append(old_src + offset)
+                edst_parts.append(old_dst + offset)
+                etype_parts.append(old_etype)
+
+            # 新边（新粒子 ↔ touching 粒子）
+            for j in cand['touching']:
+                etype = cand['new_ptype'] + int(old_ntypes[j])
+                esrc_parts.append(np.array([new_node, j + offset], dtype=np.int64))
+                edst_parts.append(np.array([j + offset, new_node], dtype=np.int64))
+                etype_parts.append(np.array([etype, etype], dtype=np.int64))
+
+        total_N      = n_cands * (N + 1)
+        batch_ntypes = np.concatenate(node_type_parts)
+        batch_src    = np.concatenate(esrc_parts)  if esrc_parts  else np.array([], dtype=np.int64)
+        batch_dst    = np.concatenate(edst_parts)  if edst_parts  else np.array([], dtype=np.int64)
+        batch_etype  = np.concatenate(etype_parts) if etype_parts else np.array([], dtype=np.int64)
+
+        # ── 单次 GNN 前向 ──
+        x = self.gnn_new.node_emb(
+            torch.from_numpy(batch_ntypes).to(device))   # (total_N, d)
+
+        if len(batch_src) > 0:
+            e_src  = torch.from_numpy(batch_src).to(device)
+            e_dst  = torch.from_numpy(batch_dst).to(device)
+            e_emb  = self.gnn_new.edge_emb(
+                torch.from_numpy(batch_etype).to(device))
+            for layer in self.gnn_new.layers:
+                x = layer(x, e_src, e_dst, e_emb)
+
+        # ── 逐图 readout（mean + max pooling）──
+        x        = x.view(n_cands, N + 1, d)                         # (C, N+1, d)
+        g_new_all = self.gnn_new.readout(
+            torch.cat([x.mean(1), x.max(1).values], dim=-1))          # (C, d)
+        return g_new_all
+
     def forward_single(self, graph_obs: dict, cand_obs: dict,
                        device: torch.device) -> torch.Tensor:
         """
         单步前向推理。
-        GNN_old 对 G_old 运行一次；GNN_new 对每个候选的 G_new 各运行一次。
+        GNN_old 对 G_old 运行一次；GNN_new 对所有候选批量运行一次（大图合并）。
         返回 (n_cands,) 未归一化分数。
         """
         n_cands = cand_obs['n_cands']
         if n_cands == 0:
             return torch.zeros(0, device=device)
 
-        g_old = self.gnn_old(graph_obs, device)   # (d,)
+        g_old    = self.gnn_old(graph_obs, device)              # (d,)
+        g_new_all = self._forward_gnn_new_batched(              # (C, d)
+            graph_obs, cand_obs, device)
 
-        scores = []
-        for cand in cand_obs['candidates']:
-            g_new_obs = self._make_g_new_obs(graph_obs, cand)
-            g_new     = self.gnn_new(g_new_obs, device)  # (d,)
-            score     = self.scorer(g_new - g_old)        # (1,)
-            scores.append(score)
-
-        return torch.cat(scores)   # (n_cands,)
+        diff   = g_new_all - g_old.unsqueeze(0)                 # (C, d)
+        scores = self.scorer(diff).squeeze(-1)                  # (C,)
+        return scores
