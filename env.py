@@ -303,8 +303,10 @@ class ConstructEnv:
             self._process_triplet(i, j, k)
 
     def _add_new_triplets(self, new_idx):
+        # 只处理 j-k 也互相接触的三元组，避免候选集随 N 平方增长
         for j, k in combinations(range(new_idx), 2):
-            self._process_triplet(new_idx, j, k)
+            if (min(j, k), max(j, k)) in self.contact_pairs:
+                self._process_triplet(new_idx, j, k)
 
     def _filter_candidates(self, new_pos_wrapped, new_rad, new_idx):
         """
