@@ -17,6 +17,10 @@ class Config:
     max_particles = 150
 
     # ---- 图结构参数 ----
+    # 是否将"巧合形成"的次级四面体加入图
+    # True:  放置新粒子时，检测所有满足两两接触条件的四元组，全部加入图
+    # False: 只加入由生成三元组直接构成的主四面体（更简洁，但图信息更少）
+    include_secondary_tets = True
     # 四面体类型：SSSS=0, SSSL=1, SSLL=2, SLLL=3, LLLL=4（= 大球数量）
     # 面类型：SSS=0, SSL=1, SLL=2, LLL=3（= 面上大球数量）
     # 特殊：face_type=4 表示"无面"（step 0 初始选择时使用）

@@ -225,17 +225,22 @@ class ConstructEnv:
                 touching.append(m)
                 self.contact_pairs.add((min(m, n_new), max(m, n_new)))
 
-        # 检测所有以 n_new 为第四顶点的新四面体。
-        # 条件：(a,b,c,n_new) 中的 4 个粒子两两接触，即：
-        #   a,b,c 都在 touching 中（均与 n_new 接触），
-        #   且 a-b、a-c、b-c 也均在 contact_pairs 中（两两接触）。
-        # 这保证了四面体的 6 条棱都是接触边，结构自洽。
-        for abc in combinations(touching, 3):
-            a, b, c = sorted(abc)
-            if ((min(a,b), max(a,b)) in self.contact_pairs and
-                (min(a,c), max(a,c)) in self.contact_pairs and
-                (min(b,c), max(b,c)) in self.contact_pairs):
-                self._add_tet(a, b, c, n_new)
+        # 检测以 n_new 为第四顶点的新四面体并加入图。
+        # 主四面体：由生成三元组 (i,j,k) + n_new 构成，必然存在。
+        # 次级四面体：touching 中其他满足两两接触条件的三元组 + n_new。
+        # cfg.include_secondary_tets 控制是否包含次级四面体。
+        if cfg.include_secondary_tets:
+            # 检测所有满足两两接触的三元组（含主四面体）
+            for abc in combinations(touching, 3):
+                a, b, c = sorted(abc)
+                if ((min(a,b), max(a,b)) in self.contact_pairs and
+                    (min(a,c), max(a,c)) in self.contact_pairs and
+                    (min(b,c), max(b,c)) in self.contact_pairs):
+                    self._add_tet(a, b, c, n_new)
+        else:
+            # 只加入主四面体（由生成三元组直接构成）
+            triplet = chosen['triplet']
+            self._add_tet(*triplet, n_new)
 
         # 更新候选集合
         n_before_filter = len(self._candidate_set)
