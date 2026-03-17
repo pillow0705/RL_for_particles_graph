@@ -60,11 +60,12 @@ def check_collision_njit(sol, r_new, all_pos, all_rad, L, collision_tol):
     for m in range(len(all_pos)):
         dm   = pbc_diff_njit(all_pos[m], sol, L)
         dist = np.sqrt(np.sum(dm ** 2))
-        gap  = dist - (all_rad[m] + r_new)
-        if gap < -collision_tol:
+        r_sum = all_rad[m] + r_new
+        gap  = dist - r_sum
+        if gap < -collision_tol * r_sum:
             collision = True
             break
-        if gap < collision_tol:
+        if gap < collision_tol * r_sum:
             coordination += 1
     return collision, coordination
 
@@ -74,9 +75,10 @@ def check_single_collision_njit(sol, r_new, new_pos, new_rad, L, collision_tol):
     """只检查候选点 sol 与单个新粒子是否碰撞（增量过滤用）。返回 (collision, touching)。"""
     dm        = pbc_diff_njit(new_pos, sol, L)
     dist      = np.sqrt(np.sum(dm ** 2))
-    gap       = dist - (new_rad + r_new)
-    collision = gap < -collision_tol
-    touching  = gap < collision_tol
+    r_sum     = new_rad + r_new
+    gap       = dist - r_sum
+    collision = gap < -collision_tol * r_sum
+    touching  = gap < collision_tol * r_sum
     return collision, touching
 
 
